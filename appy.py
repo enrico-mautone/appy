@@ -57,8 +57,8 @@ def run_db_query(query, is_select=False):
             return result.rowcount  
 
 @app.get("/schema_diagram")
-async def get_db_schema_diagram(width: float = Query(12, alias="width"), height: float = Query(12, alias="height")):
-    img = generate_schema_graph(engine,width,height)
+async def get_db_schema_diagram(width: float = Query(12, alias="width"), height: float = Query(12, alias="height"),table_name: str = Query('', alias="table_name")):
+    img = generate_schema_graph(engine,width,height,table_name)
     return Response(content=img.read(), media_type="image/png")
     
 @app.get("/table_definition/{table_name}", response_class=PlainTextResponse)
@@ -91,7 +91,7 @@ async def table_definition(table_name: str):
 
     return "\n".join(rows)
 
-@app.get("/table-relationships", response_class=PlainTextResponse)
+@app.get("/table_relationships", response_class=PlainTextResponse)
 async def table_relationships():
     relationships = get_table_relationships(engine)
     # Calcola la larghezza massima per il nome della tabella per l'allineamento
@@ -317,9 +317,15 @@ def get_num_records(engine,table_name):
         print(f"Errore nell'esecuzione della query di conteggio: {e}")
         return 0
 
-def generate_schema_graph(engine, width: float = 12, height: float = 12):
+def generate_schema_graph(engine, width: float = 12, height: float = 12, table_name_param: str = ''):
     metadata = MetaData()
-    metadata.reflect(bind=engine)  # Rifletti lo schema bindando qui
+    
+    if table_name_param:
+        # Rifletti solo la tabella specificata
+        metadata.reflect(bind=engine, only=[table_name_param])
+    else:
+        # Rifletti lo schema bindando qui per tutte le tabelle
+        metadata.reflect(bind=engine)
 
     G = nx.DiGraph()
 
@@ -328,7 +334,8 @@ def generate_schema_graph(engine, width: float = 12, height: float = 12):
 
     for table_name, table in metadata.tables.items():
         for fk in table.foreign_keys:
-            G.add_edge(fk.column.table.name, table_name, label=f"{fk.parent.name} -> {fk.column.name}")
+            if table_name == table_name_param or fk.column.table.name == table_name_param or table_name_param == '':
+                G.add_edge(fk.column.table.name, table_name, label=f"{fk.parent.name} -> {fk.column.name}")
 
     pos = nx.spring_layout(G)  # Posizionamento dei nodi
     plt.figure(figsize=(width, height))  # Definisci la dimensione della figura
