@@ -3,3 +3,5 @@ pyodbc
 fastapi
 uvicorn
 python-jose
+networkx 
+matplotlib

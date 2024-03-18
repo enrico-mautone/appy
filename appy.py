@@ -1,13 +1,18 @@
-from fastapi import FastAPI, HTTPException, Depends, Response, Security, Request
-from fastapi.responses import PlainTextResponse
+from datetime import datetime, timedelta
+from fastapi import FastAPI, HTTPException, Depends, Query, Response, Security, Request
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy import create_engine, text, select, MetaData, Table
-from sqlalchemy.engine.reflection import Inspector
+from graphviz import Digraph
+from sqlalchemy import DateTime, create_engine, func, inspect, select, MetaData, Table, true
 from sqlalchemy.engine import reflection
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import and_
 from collections import defaultdict
+import networkx as nx
+import matplotlib.pyplot as plt
+import io
 
 from jose import JWTError, jwt
-from typing import Optional
 import config
 import threading
 
@@ -27,7 +32,7 @@ app = FastAPI()
 engine = create_engine(f"{config.DATABASE_URL}")
 metadata = MetaData()
 
-inspector = Inspector.from_engine(engine)
+inspector = inspect(engine)
 
 if not config.schema_config["tables"] or  len(config.schema_config["tables"]) == 0:
     all_tables = inspector.get_table_names(schema=config.schema_config["schema"])
@@ -50,6 +55,41 @@ def run_db_query(query, is_select=False):
         else:
             result = connection.execute(query)
             return result.rowcount  
+
+@app.get("/diagram")
+async def get_db_schema_diagram(width: float = Query(12, alias="width"), height: float = Query(12, alias="height")):
+    img = generate_schema_graph(engine,width,height)
+    return Response(content=img.read(), media_type="image/png")
+    
+@app.get("/table_definition/{table_name}", response_class=PlainTextResponse)
+async def table_definition(table_name: str):
+    print("table_definition %s" % table_name)
+    table_info = get_table_info(engine, table_name)
+    
+    if table_info is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    # Formatta le informazioni in una tabella plain text
+    headers = ["Name", "Type", "Primary Key", "Nullable", "Default"]
+    max_length = {header: len(header) for header in headers}
+    for column in table_info:
+        for key, value in column.items():
+            max_length[key] = max(max_length[key], len(str(value)))
+    
+    header_row = " | ".join(header.ljust(max_length[header]) for header in headers)
+    separator = "-|-".join("-" * max_length[header] for header in headers)
+
+    num_records = get_num_records(engine,table_name)
+
+    # Prepara la riga con il nome della tabella e il numero di record
+    table_name_row = f"TABLE: {table_name}\t(Records: {num_records})"
+    rows = [table_name_row, header_row, separator]
+    
+    for column in table_info:
+        row = " | ".join(str(column[header]).ljust(max_length[header]) for header in headers)
+        rows.append(row)
+
+    return "\n".join(rows)
 
 @app.get("/table-relationships", response_class=PlainTextResponse)
 async def table_relationships():
@@ -110,11 +150,20 @@ async def create_item(alias: str, item: dict, context: dict = Depends(verify_use
     return created_item[0]
 
 @app.get("/{alias}")
-async def read_all_items(alias: str, context: dict = Depends(verify_user_session)):
+async def read_all_items(alias: str, request:Request,context: dict = Depends(verify_user_session)):
     table, table_name, id_field = tables.get(alias, (None, None, None))
     if not table_name:
         raise HTTPException(status_code=404, detail="Table not found")
-    query = select(table) 
+    
+    query_params = dict(request.query_params)
+
+    print(f"query_params = {query_params}") 
+
+    where_clause = build_where_clause(table, query_params)
+
+    print(f"where_clause = {where_clause}")
+
+    query = select(table).where(where_clause)
     result = None
     def run():
         nonlocal result
@@ -199,8 +248,93 @@ def get_table_relationships(engine):
             relationships[table_name].append(fk['referred_table'])
     return relationships
 
+def build_where_clause(table, query_params):
+    conditions = []
+    for field, value in query_params.items():
+        field_lower = field.lower()
+        if field_lower in {f.lower() for f in table.c.keys()}:
+            column = getattr(table.c, field)
+            if isinstance(column.type, DateTime):
+                try:
+                    # Crea un oggetto datetime dal parametro della query
+                    value_datetime = datetime.fromisoformat(value)
+                    # Aggiungi un giorno al valore della data per creare un intervallo
+                    next_day = value_datetime + timedelta(days=1)
+                    # Crea una condizione per selezionare i record entro questo intervallo
+                    conditions.append(column >= value_datetime)
+                    conditions.append(column < next_day)
+                except ValueError:
+                    # Se la conversione fallisce, ignora questo parametro
+                    continue
+            else:
+                conditions.append(column == value)
+    
+    if not conditions:
+        return true()
+    return and_(*conditions)
+
+def get_table_info(engine, table_name):
+    metadata = MetaData()
+    metadata.reflect(engine, only=[table_name])
+    table = metadata.tables.get(table_name)
+    if table_name not in metadata.tables:
+        return None  # La tabella non esiste
+
+    columns_info = []
+    for column in table.columns:
+        column_info = {
+            "Name": column.name,
+            "Type": str(column.type),
+            "Primary Key": column.primary_key,
+            "Nullable": column.nullable,
+            "Default": str(column.default)
+        }
+        columns_info.append(column_info)
+    return columns_info
 
 
+def get_num_records(engine,table_name):
+    metadata = MetaData()
+    metadata.reflect(engine, only=[table_name])
+    table = metadata.tables.get(table_name)
+    if table_name not in metadata.tables:
+        return 0  # La tabella non esiste
+
+    try:
+        with engine.connect() as connection:
+            num_records_query = select(func.count()).select_from(table)
+            result = connection.execute(num_records_query)
+            num_records = result.scalar()  # Ottiene il primo valore del risultato, che sarà il conteggio
+            return num_records
+    except SQLAlchemyError as e:
+        print(f"Errore nell'esecuzione della query di conteggio: {e}")
+        return 0
+
+def generate_schema_graph(engine, width: float = 12, height: float = 12):
+    metadata = MetaData()
+    metadata.reflect(bind=engine)  # Rifletti lo schema bindando qui
+
+    G = nx.DiGraph()
+
+    for table_name in metadata.tables:
+        G.add_node(table_name)
+
+    for table_name, table in metadata.tables.items():
+        for fk in table.foreign_keys:
+            G.add_edge(fk.column.table.name, table_name, label=f"{fk.parent.name} -> {fk.column.name}")
+
+    pos = nx.spring_layout(G)  # Posizionamento dei nodi
+    plt.figure(figsize=(width, height))  # Definisci la dimensione della figura
+    nx.draw(G, pos, with_labels=True, node_size=2000, node_color="lightblue", font_size=10, font_weight="bold")
+    edge_labels = nx.get_edge_attributes(G, 'label')
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_color='red')
+
+    img = io.BytesIO()  # Crea un buffer per l'immagine
+    plt.savefig(img, format='PNG')  # Salva il grafico nel buffer come PNG
+    img.seek(0)  # Sposta il cursore all'inizio del buffer
+    plt.close()  # Chiudi la figura per liberare memoria
+    return img
+    
 
 if __name__ == "__main__":
     import uvicorn
