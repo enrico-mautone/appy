@@ -1,2 +1,10 @@
 APPY ROADMAP:
 
+- Testing single table api
+- Testing call to stored procedures
+- Multi table support with schema specification
+- Function calls 
+- Select parameters from url
+- PostgresSQL Support
+- MySQL Support
+- SQLite Support
