@@ -56,7 +56,7 @@ def run_db_query(query, is_select=False):
             result = connection.execute(query)
             return result.rowcount  
 
-@app.get("/diagram")
+@app.get("/schema_diagram")
 async def get_db_schema_diagram(width: float = Query(12, alias="width"), height: float = Query(12, alias="height")):
     img = generate_schema_graph(engine,width,height)
     return Response(content=img.read(), media_type="image/png")

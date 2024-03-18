@@ -3,7 +3,7 @@
 # DATABASE_URL = "mysql+aiomysql://user:password@localhost/dbname"
 # DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 # DATABASE_URL = "mssql+pyodbc://user:password@database_url/catalog?driver=your_odbc_driver"
-
+DATABASE_URL = "mssql+pyodbc://sa:password01!@WINDELL-186CUHK\SQLEXPRESS/NAUS_PROD?driver=ODBC+Driver+17+for+SQL+Server"
 
 
 schema_config = {
