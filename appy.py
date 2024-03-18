@@ -3,6 +3,9 @@ from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import create_engine, text, select, MetaData, Table
 from sqlalchemy.engine.reflection import Inspector
+from sqlalchemy.engine import reflection
+from collections import defaultdict
+
 from jose import JWTError, jwt
 from typing import Optional
 import config
@@ -48,6 +51,24 @@ def run_db_query(query, is_select=False):
             result = connection.execute(query)
             return result.rowcount  
 
+@app.get("/table-relationships", response_class=PlainTextResponse)
+async def table_relationships():
+    relationships = get_table_relationships(engine)
+    # Calcola la larghezza massima per il nome della tabella per l'allineamento
+    max_table_name_length = max(len(table) for table in relationships.keys())
+    max_relations_list_length = max(len(", ".join(relations)) for relations in relationships.values() if relations)
+
+    # Costruisci l'header della tabella per la risposta
+    header = f"{'Nome Tabella':<{max_table_name_length}} {'Relazioni':<{max_relations_list_length}}\n"
+    header += "-" * (max_table_name_length + max_relations_list_length + 1) + "\n"  # Una linea di separazione
+
+    # Costruzione del corpo della risposta con i dettagli delle relazioni
+    body = ""
+    for table, related_tables in relationships.items():
+        relations_str = ", ".join(related_tables)
+        body += f"{table:<{max_table_name_length}} {relations_str:<{max_relations_list_length}}\n"
+
+    return Response(content=header + body, media_type="text/plain")
 
 @app.get("/", response_class=PlainTextResponse)
 async def get_available_tables():
@@ -160,6 +181,25 @@ async def delete_item(alias: str, item_id: int, context: dict = Depends(verify_u
     thread.start()
     thread.join()
     return item_to_delete[0]
+
+def get_table_relationships(engine):
+    inspector = reflection.Inspector.from_engine(engine)
+    relationships = defaultdict(list)
+
+    # Itera su tutte le tabelle
+    for table_name in inspector.get_table_names():
+        # Ottieni le informazioni sulle chiavi esterne per ciascuna tabella
+        fk_info = inspector.get_foreign_keys(table_name)
+        if not fk_info:
+            continue
+
+        for fk in fk_info:
+            # Costruisci una mappa delle relazioni
+            # chiave: tabella corrente, valore: lista di tabelle a cui è collegata tramite chiavi esterne
+            relationships[table_name].append(fk['referred_table'])
+    return relationships
+
+
 
 
 if __name__ == "__main__":
