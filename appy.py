@@ -44,7 +44,7 @@ for table_name, alias, id_field in config.schema_config["tables"]:
     table = Table(table_name, metadata, autoload_with=engine, schema=config.schema_config["schema"])
     pk_columns = inspector.get_pk_constraint(table_name, schema=config.schema_config["schema"])["constrained_columns"]
     id_field = pk_columns[0] if pk_columns else None
-    tables[alias] = (table, table_name, id_field)
+    tables[alias.lower()] = (table, table_name, id_field)
 
 def run_db_query(query, is_select=False):
     with engine.connect() as connection:
@@ -128,7 +128,7 @@ async def get_available_tables():
 
 @app.post("/{alias}")
 async def create_item(alias: str, item: dict, context: dict = Depends(verify_user_session)):
-    table, table_name, id_field = tables.get(alias, (None, None, None))
+    table, table_name, id_field = tables.get(alias.lower(), (None, None, None))
     if not table_name:
         raise HTTPException(status_code=404, detail="Table not found")
     query = table.insert().values(**item)
@@ -151,7 +151,8 @@ async def create_item(alias: str, item: dict, context: dict = Depends(verify_use
 
 @app.get("/{alias}")
 async def read_all_items(alias: str, request:Request,context: dict = Depends(verify_user_session)):
-    table, table_name, id_field = tables.get(alias, (None, None, None))
+
+    table, table_name, id_field = tables.get(alias.lower(), (None, None, None))
     if not table_name:
         raise HTTPException(status_code=404, detail="Table not found")
     
@@ -163,7 +164,11 @@ async def read_all_items(alias: str, request:Request,context: dict = Depends(ver
 
     print(f"where_clause = {where_clause}")
 
-    query = select(table).where(where_clause)
+    if where_clause.compare(true()):
+        query = select(table)
+    else:
+        query = select(table).where(where_clause)
+
     result = None
     def run():
         nonlocal result
@@ -172,12 +177,12 @@ async def read_all_items(alias: str, request:Request,context: dict = Depends(ver
     thread.start()
     thread.join()
     if not result:
-        raise HTTPException(status_code=404, detail="No items found")
+        raise HTTPException(status_code=404, detail=f"No Records found in table: {table_name}")
     return result
 
 @app.get("/{alias}/{item_id}")
 async def read_item(alias: str, item_id: int, context: dict = Depends(verify_user_session)):
-    table, table_name, id_field = tables.get(alias, (None, None, None))
+    table, table_name, id_field = tables.get(alias.lower(), (None, None, None))
     if not table_name:
         raise HTTPException(status_code=404, detail="Table not found")
     query = select(table).where(getattr(table.c, id_field) == item_id) 
@@ -194,7 +199,7 @@ async def read_item(alias: str, item_id: int, context: dict = Depends(verify_use
 
 @app.put("/{alias}/{item_id}")
 async def update_item(alias: str, item_id: int, item: dict, context: dict = Depends(verify_user_session)):
-    table, table_name, id_field = tables.get(alias, (None, None, None))
+    table, table_name, id_field = tables.get(alias.lower(), (None, None, None))
     if not table_name:
         raise HTTPException(status_code=404, detail="Table not found")
     update_query = table.update().where(getattr(table.c, id_field) == item_id).values(**item)
@@ -214,7 +219,7 @@ async def update_item(alias: str, item_id: int, item: dict, context: dict = Depe
 
 @app.delete("/{alias}/{item_id}")
 async def delete_item(alias: str, item_id: int, context: dict = Depends(verify_user_session)):
-    table, table_name, id_field = tables.get(alias, (None, None, None))
+    table, table_name, id_field = tables.get(alias.lower(), (None, None, None))
     if not table_name:
         raise HTTPException(status_code=404, detail="Table not found")
     get_query = select(table).where(getattr(table.c, id_field) == item_id)
