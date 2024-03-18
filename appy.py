@@ -110,10 +110,12 @@ async def table_relationships():
 
     return Response(content=header + body, media_type="text/plain")
 
-@app.get("/", response_class=PlainTextResponse)
+@app.get("/tables", response_class=PlainTextResponse)
 async def get_available_tables():
     # Preparazione dell'header della tabella per la risposta
-    header = f"{'#':<10} {'Alias':<50} {'Nome Tabella':<50} {'ID Field':<20}\n"
+    header = f"SCHEMA: {config.schema_config['schema']}"
+    header += "\n\n"
+    header += f"{'#':<10} {'Nome Tabella':<50} {'ID Field':<20}\n"
     header += "-" * 100 + "\n"  # Una linea di separazione
 
     # Costruzione del corpo della risposta con i dettagli delle tabelle
@@ -121,7 +123,7 @@ async def get_available_tables():
     cnt=1
     for alias,(table, table_name, id_field) in tables.items():
         table_name = table.name  # Assumendo che 'table' abbia l'attributo 'name'
-        body += f"{cnt:<10} {alias:<50} {table_name:<50} {id_field or 'ID non specificato':<20}\n"
+        body += f"{cnt:<10} {table_name:<50} {id_field or 'ID non specificato':<20}\n"
         cnt = cnt+1
 
     return Response(content=header + body, media_type="text/plain")
@@ -340,6 +342,10 @@ def generate_schema_graph(engine, width: float = 12, height: float = 12):
     plt.close()  # Chiudi la figura per liberare memoria
     return img
     
+@app.get("/", response_class=PlainTextResponse)
+async def root():
+    return "Welcome to Appy!"
+
 
 if __name__ == "__main__":
     import uvicorn
