@@ -5,3 +5,4 @@ uvicorn
 python-jose
 networkx 
 matplotlib
+psycopg2-binary
