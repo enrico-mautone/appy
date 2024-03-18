@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException, Depends, Security, Request
+from fastapi import FastAPI, HTTPException, Depends, Response, Security, Request
+from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import create_engine, text, select, MetaData, Table
 from sqlalchemy.engine.reflection import Inspector
@@ -47,6 +48,22 @@ def run_db_query(query, is_select=False):
             result = connection.execute(query)
             return result.rowcount  
 
+
+@app.get("/", response_class=PlainTextResponse)
+async def get_available_tables():
+    # Preparazione dell'header della tabella per la risposta
+    header = f"{'#':<10} {'Alias':<50} {'Nome Tabella':<50} {'ID Field':<20}\n"
+    header += "-" * 100 + "\n"  # Una linea di separazione
+
+    # Costruzione del corpo della risposta con i dettagli delle tabelle
+    body = ""
+    cnt=1
+    for alias,(table, table_name, id_field) in tables.items():
+        table_name = table.name  # Assumendo che 'table' abbia l'attributo 'name'
+        body += f"{cnt:<10} {alias:<50} {table_name:<50} {id_field or 'ID non specificato':<20}\n"
+        cnt = cnt+1
+
+    return Response(content=header + body, media_type="text/plain")
 
 @app.post("/{alias}")
 async def create_item(alias: str, item: dict, context: dict = Depends(verify_user_session)):
