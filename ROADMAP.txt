@@ -5,6 +5,6 @@ APPY ROADMAP:
 - Multi table support with schema specification     [OK]
 - Function calls [TODO]
 - Select parameters from url [TODO]
-- PostgresSQL Support [TODO]
+- PostgresSQL Support [OK]
 - MySQL Support [TODO]
 - SQLite Support [TODO]
