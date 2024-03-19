@@ -4,7 +4,7 @@ setup(
     name='appy',
     version='0.1.0',
     description='Python service to speed-up API creation and db analysis',
-    author='Il Tuo Nome',
+    author='Enrico Mautone',
     author_email='enrico@mautone.com',
     packages=find_packages(),
     install_requires=[
