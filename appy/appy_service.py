@@ -1,12 +1,16 @@
 # appy/appy_service.py
+import os
 import uvicorn
-import config
+
 from appy.appy import app
 
 
-def run_server(config_path='config/config.py'):
- 
-    uvicorn.run(app, host=config.SERVICE_IP, port=config.SERVICE_PORT)
+def run_server():
+
+    service_ip = os.getenv("APPY_SERVICE_IP", "default_ip")
+    service_port = os.getenv("APPY_SERVICE_PORT", "default_port")
+
+    uvicorn.run(app, host=service_ip, port=service_port)
 
 if __name__ == "__main__":
     run_server()

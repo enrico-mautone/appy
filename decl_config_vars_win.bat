@@ -1,0 +1,4 @@
+set SERVICE_IP="127.0.0.1"
+set SERVICE_PORT="8000"
+set APPY_CONFIG_PATH="./config.py"
+

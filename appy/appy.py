@@ -11,12 +11,30 @@ from collections import defaultdict
 import networkx as nx
 import matplotlib.pyplot as plt
 import io
-
+import os
+import importlib.util
 from jose import JWTError, jwt
-import config
 import threading
 
+
+app = FastAPI()
+
 security = HTTPBearer(auto_error=False) 
+
+def load_config_module(path):
+    spec = importlib.util.spec_from_file_location("config", path)
+    config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config)
+    return config
+
+def load_config():
+    config_path = os.getenv("APPY_CONFIG_PATH")
+    if not config_path:
+        raise Exception("La variabile di ambiente APPY_CONFIG_PATH non è impostata.")
+    return load_config_module(config_path)
+
+config = load_config()
+
 
 async def verify_user_session(token: HTTPAuthorizationCredentials = Security(security), verify_token: bool = config.VERIFY_TOKEN) -> dict:
     if not verify_token:        
@@ -27,7 +45,7 @@ async def verify_user_session(token: HTTPAuthorizationCredentials = Security(sec
     except JWTError:
         raise HTTPException(status_code=403, detail="Invalid JWT token")
 
-app = FastAPI()
+
 
 engine = create_engine(f"{config.DATABASE_URL}")
 metadata = MetaData()
