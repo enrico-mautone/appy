@@ -1,11 +1,11 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from fastapi import FastAPI, HTTPException, Depends, Query, Response, Security, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from graphviz import Digraph
-from sqlalchemy import DateTime, create_engine, func, inspect, select, MetaData, Table, true
+from sqlalchemy import DateTime, create_engine, func, inspect, select, MetaData, Table, text, true
 from sqlalchemy.engine import reflection
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from collections import defaultdict
 import networkx as nx
@@ -54,7 +54,79 @@ def run_db_query(query, is_select=False):
             return [dict(row) for row in result]
         else:
             result = connection.execute(query)
-            return result.rowcount  
+            return result.rowcount
+
+@app.get("/stored_procedures")
+async def get_stored_procedures():
+    sql = text("""
+    SELECT
+    SCHEMA_NAME(p.schema_id) AS schema_name,
+    p.name AS procedure_name,
+    STRING_AGG(
+        CONCAT(
+            '@', pa.name, ' ', t.name,
+            CASE
+                WHEN t.name IN ('varchar', 'nvarchar', 'varbinary') THEN CONCAT('(', pa.max_length, ')')
+                ELSE ''
+            END,
+            CASE
+                WHEN pa.is_nullable = 1 THEN ' NULLABLE'
+                ELSE ' NOT NULLABLE'
+            END,
+            CASE
+                WHEN pa.has_default_value = 1 THEN CONCAT(' DEFAULT ', CONVERT(VARCHAR(MAX), pa.default_value))
+                ELSE ''
+            END
+        ),
+        ', '
+    ) WITHIN GROUP (ORDER BY pa.parameter_id) AS parameters
+FROM
+    sys.procedures p
+    JOIN sys.parameters pa ON p.object_id = pa.object_id
+    JOIN sys.types t ON pa.user_type_id = t.user_type_id
+WHERE
+    pa.name IS NOT NULL
+GROUP BY
+    p.schema_id, p.name
+ORDER BY
+    p.name
+    """)
+
+    response_lines = [f"SCHEMA: {config.schema_config['schema']}\n\n", "#\tStored Procedure Name\t\tParameters\n", "-" * 115 + "\n"]
+    
+    with engine.connect() as conn:
+        results = conn.execute(sql).fetchall()
+        for index, (schema_name, procedure_name, parameters) in enumerate(results, start=1):
+            # Formattazione dei parametri rimuovendo doppie virgolette
+            parameters = parameters.replace('\"', '')
+            # Allineamento del nome della stored procedure e dei parametri
+            line = f"{index:<2}\t{procedure_name:<35}\t{parameters}\n"
+            response_lines.append(line)
+
+    response_text = "".join(response_lines)
+    return Response(content=response_text, media_type="text/plain")
+  
+        
+@app.get("/procedure/{procedure_name}")
+async def execute_procedure(procedure_name: str, request: Request):
+    # Estrai i parametri dalla query
+    params = dict(request.query_params)
+    
+    # Costruisce dinamicamente la stringa di parametri per la stored procedure
+    sql_params = ", ".join([f"@{k} = :{k}" for k in params.keys()])
+
+    # Prepara la query SQL dinamicamente, inclusi i parametri
+    sql = text(f"EXEC {procedure_name} {sql_params}")
+
+    result_list = []
+
+    # Esegue la query passando i parametri come un dizionario
+    with engine.connect() as conn:
+        result = conn.execute(sql, params).mappings().all()
+        result_list = [dict(row) for row in result]
+
+    return result_list
+        
 
 @app.get("/schema_diagram")
 async def get_db_schema_diagram(width: float = Query(12, alias="width"), height: float = Query(12, alias="height"),table_name: str = Query('', alias="table_name")):
@@ -348,6 +420,22 @@ def generate_schema_graph(engine, width: float = 12, height: float = 12, table_n
     img.seek(0)  # Sposta il cursore all'inizio del buffer
     plt.close()  # Chiudi la figura per liberare memoria
     return img
+
+async def execute_stored_procedure(engine, procedure_name: str, **kwargs):
+    with engine.connect() as connection:
+        # Costruisci la query per eseguire la stored procedure
+        query = f"CALL {procedure_name}("
+        query += ", ".join([f":{key}" for key in kwargs.keys()])
+        query += ");"
+        try:
+            result = connection.execute(text(query), **kwargs)
+            # Assumendo che la stored procedure possa restituire dei risultati
+            result_set = result.fetchall()
+            return [dict(row) for row in result_set]
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+
     
 @app.get("/", response_class=PlainTextResponse)
 async def root():
