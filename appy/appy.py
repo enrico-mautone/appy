@@ -21,46 +21,44 @@ app = FastAPI()
 
 security = HTTPBearer(auto_error=False) 
 
-def load_config_module(path):
-    spec = importlib.util.spec_from_file_location("config", path)
-    config = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(config)
-    return config
+def load_config_var(varname,default_value):
+    return os.getenv(varname,default_value)
 
-def load_config():
-    config_path = os.getenv("APPY_CONFIG_PATH")
-    if not config_path:
-        raise Exception("La variabile di ambiente APPY_CONFIG_PATH non è impostata.")
-    return load_config_module(config_path)
+VERIFY_TOKEN = load_config_var('VERIFY_TOKEN',False)
+SECRET_KEY = load_config_var('SECRET_KEY','')
+ALGORITHM = load_config_var('ALGORITHM','')
+DATABASE_URL = load_config_var('DATABASE_URL','')
+SCHEMA = load_config_var('SCHEMA','')
+SCHEMA_TABLES = load_config_var('TABLES',[]).split(',')
 
-config = load_config()
-
-
-async def verify_user_session(token: HTTPAuthorizationCredentials = Security(security), verify_token: bool = config.VERIFY_TOKEN) -> dict:
+async def verify_user_session(token: HTTPAuthorizationCredentials = Security(security), verify_token: bool = VERIFY_TOKEN) -> dict:
     if not verify_token:        
         return {"user": "anonymous"}
     try:
-        payload = jwt.decode(token.credentials, config.SECRET_KEY, algorithms=[config.ALGORITHM])
+        payload = jwt.decode(token.credentials, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
     except JWTError:
         raise HTTPException(status_code=403, detail="Invalid JWT token")
 
 
 
-engine = create_engine(f"{config.DATABASE_URL}")
+engine = create_engine(f"{DATABASE_URL}")
 metadata = MetaData()
 
 inspector = inspect(engine)
 
-if not config.schema_config["tables"] or  len(config.schema_config["tables"]) == 0:
-    all_tables = inspector.get_table_names(schema=config.schema_config["schema"])
-    config.schema_config["tables"] = [[table, table, None] for table in all_tables]
+if not SCHEMA_TABLES or  len(SCHEMA_TABLES) == 0:
+    all_tables = inspector.get_table_names(schema=SCHEMA)
+    SCHEMA_TABLES = [[table, table, None] for table in all_tables]
+else:
+    selected_tables = [[table, table, None] for table in SCHEMA_TABLES]
+    SCHEMA_TABLES = selected_tables
 
 
 tables = {}
-for table_name, alias, id_field in config.schema_config["tables"]:
-    table = Table(table_name, metadata, autoload_with=engine, schema=config.schema_config["schema"])
-    pk_columns = inspector.get_pk_constraint(table_name, schema=config.schema_config["schema"])["constrained_columns"]
+for table_name, alias, id_field in SCHEMA_TABLES:
+    table = Table(table_name, metadata, autoload_with=engine, schema=SCHEMA)
+    pk_columns = inspector.get_pk_constraint(table_name, schema=SCHEMA)["constrained_columns"]
     id_field = pk_columns[0] if pk_columns else None
     tables[alias.lower()] = (table, table_name, id_field)
 
@@ -110,7 +108,7 @@ ORDER BY
     p.name
     """)
 
-    response_lines = [f"SCHEMA: {config.schema_config['schema']}\n\n", "#\tStored Procedure Name\t\tParameters\n", "-" * 115 + "\n"]
+    response_lines = [f"SCHEMA: {SCHEMA}\n\n", "#\tStored Procedure Name\t\tParameters\n", "-" * 115 + "\n"]
     
     with engine.connect() as conn:
         results = conn.execute(sql).fetchall()
@@ -185,11 +183,12 @@ async def table_definition(table_name: str):
 async def table_relationships():
     relationships = get_table_relationships(engine)
     # Calcola la larghezza massima per il nome della tabella per l'allineamento
-    max_table_name_length = max(len(table) for table in relationships.keys())
-    max_relations_list_length = max(len(", ".join(relations)) for relations in relationships.values() if relations)
+    max_table_name_length = 50
+    max_relations_list_length = 70
 
     # Costruisci l'header della tabella per la risposta
-    header = f"{'Nome Tabella':<{max_table_name_length}} {'Relazioni':<{max_relations_list_length}}\n"
+    header = f"SCHEMA: {SCHEMA}\n\n"
+    header += f"{'Nome Tabella':<{max_table_name_length}} {'Relazioni':<{max_relations_list_length}}\n"
     header += "-" * (max_table_name_length + max_relations_list_length + 1) + "\n"  # Una linea di separazione
 
     # Costruzione del corpo della risposta con i dettagli delle relazioni
@@ -203,7 +202,7 @@ async def table_relationships():
 @app.get("/tables", response_class=PlainTextResponse)
 async def get_available_tables():
     # Preparazione dell'header della tabella per la risposta
-    header = f"SCHEMA: {config.schema_config['schema']}"
+    header = f"SCHEMA: {SCHEMA}"
     header += "\n\n"
     header += f"{'#':<10} {'Nome Tabella':<50} {'ID Field':<20}\n"
     header += "-" * 100 + "\n"  # Una linea di separazione
@@ -334,6 +333,15 @@ def get_table_relationships(engine):
 
     # Itera su tutte le tabelle
     for table_name in inspector.get_table_names():
+
+        table_found = False
+        for record in SCHEMA_TABLES:
+            if table_name.lower() == record[0].lower(): 
+                table_found = True
+                break
+        if table_found == False:
+            continue
+    
         # Ottieni le informazioni sulle chiavi esterne per ciascuna tabella
         fk_info = inspector.get_foreign_keys(table_name)
         if not fk_info:
@@ -371,6 +379,15 @@ def build_where_clause(table, query_params):
     return and_(*conditions)
 
 def get_table_info(engine, table_name):
+
+    table_found = False
+    for record in SCHEMA_TABLES:
+        if table_name.lower() == record[0].lower():  # Assumendo che il nome della tabella sia il primo elemento di ogni record
+            table_found = True
+            break
+    if table_found == False:
+        return None
+    
     metadata = MetaData()
     metadata.reflect(engine, only=[table_name])
     table = metadata.tables.get(table_name)
@@ -459,7 +476,3 @@ async def execute_stored_procedure(engine, procedure_name: str, **kwargs):
 async def root():
     return "Welcome to Appy!"
 
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=config.SERVICE_PORT)
