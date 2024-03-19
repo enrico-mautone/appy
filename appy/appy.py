@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import io
 
 from jose import JWTError, jwt
-import config
+import config.config as config
 import threading
 
 security = HTTPBearer(auto_error=False) 
