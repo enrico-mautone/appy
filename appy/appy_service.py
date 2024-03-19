@@ -1,6 +1,6 @@
 # appy/appy_service.py
 import uvicorn
-from config import config
+import config
 from appy.appy import app
 
 

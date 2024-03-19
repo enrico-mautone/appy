@@ -4,6 +4,7 @@
 # DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 # DATABASE_URL = "mssql+pyodbc://user:password@database_url/catalog?driver=your_odbc_driver"
 
+
 schema_config = {
     "schema": "dbo",
     "tables": [
